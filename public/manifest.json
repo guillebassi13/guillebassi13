@@ -1,0 +1,11 @@
+{
+  "name": "Panel personal",
+  "short_name": "Panel",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1B1229",
+  "theme_color": "#1B1229",
+  "icons": [
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -1,4 +1,4 @@
--- Ejecutar esto una vez en Supabase: Panel izquierdo > SQL Editor > New query > pegar y "Run"
+-- Ejecutar esto una vez en Supabase: panel izquierdo > "SQL Editor" > "New query" > pegar todo > "Run"
 
 create table if not exists kv_store (
   key text primary key,
@@ -8,10 +8,11 @@ create table if not exists kv_store (
 
 alter table kv_store enable row level security;
 
--- Política simple para uso personal: cualquiera con la anon key (solo vos, si no compartís
--- la URL ni la key) puede leer y escribir. No hay login de por medio.
-create policy "permitir todo con anon key"
+-- Con esta política, SOLO alguien que inició sesión (con el usuario y contraseña
+-- que vas a crear en "Authentication") puede leer o escribir datos. Sin login, no se
+-- puede hacer nada, aunque alguien tenga la URL de la app.
+create policy "solo usuarios logueados"
   on kv_store
   for all
-  using (true)
-  with check (true);
+  using (auth.role() = 'authenticated')
+  with check (auth.role() = 'authenticated');

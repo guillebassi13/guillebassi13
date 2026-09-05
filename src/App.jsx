@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, createContext, useContext, useRef } from "react";
+import { PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 /* ======================= ESTILOS / TOKENS ======================= */
 const COLORS = {
@@ -2603,6 +2604,108 @@ function useCollectionCount(prefix) {
   return count;
 }
 
+function useManualNumber(storageKey) {
+  const [valor, setValor] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    (async () => {
+      const raw = await storageGet(storageKey);
+      if (raw !== null && raw !== undefined) setValor(raw);
+      setLoaded(true);
+    })();
+  }, [storageKey]);
+  const save = async (v) => {
+    setValor(v);
+    await storageSet(storageKey, v);
+  };
+  return [valor, save, loaded];
+}
+
+const NEGOCIO_COLORS = { DropDealer: "#9B7FE8", "Fiesta Calor": "#F2A6C9", Reprocan: "#C98CE0" };
+
+function NegociosPieChart({ gananciaDropDealer }) {
+  const [gananciaReprocan, saveGananciaReprocan, loaded1] = useManualNumber("trabajos-ganancia-reprocan");
+  const [gananciaFiestaCalor, saveGananciaFiestaCalor, loaded2] = useManualNumber("trabajos-ganancia-fiestacalor");
+
+  if (!loaded1 || !loaded2) return null;
+
+  const negocios = [
+    { nombre: "DropDealer", valor: gananciaDropDealer, editable: false },
+    { nombre: "Fiesta Calor", valor: parseFloat(gananciaFiestaCalor) || 0, editable: true, save: saveGananciaFiestaCalor, raw: gananciaFiestaCalor },
+    { nombre: "Reprocan", valor: parseFloat(gananciaReprocan) || 0, editable: true, save: saveGananciaReprocan, raw: gananciaReprocan },
+  ];
+
+  const total = negocios.reduce((s, n) => s + Math.max(0, n.valor), 0);
+  const chartData = negocios.map((n) => ({ name: n.nombre, value: Math.max(0, n.valor) }));
+  const hayDatos = total > 0;
+
+  return (
+    <div className="pp-card" style={{ padding: 16, marginBottom: 10 }}>
+      <div className="pp-heading" style={{ fontWeight: 700, marginBottom: 4 }}>
+        Ganancia por negocio
+      </div>
+      <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 12 }}>
+        DropDealer se calcula solo desde tus pedidos. Fiesta Calor y Reprocan los cargás vos abajo.
+      </div>
+
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 1fr) minmax(200px, 1fr)", gap: 16, alignItems: "center" }}>
+        <div style={{ width: "100%", height: 220 }}>
+          {hayDatos ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie data={chartData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={85} paddingAngle={2}>
+                  {chartData.map((entry) => (
+                    <Cell key={entry.name} fill={NEGOCIO_COLORS[entry.name] || COLORS.primary} stroke={COLORS.ink} strokeWidth={2} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  formatter={(value) => `$${Number(value).toLocaleString("es-AR")}`}
+                  contentStyle={{ background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 8, color: COLORS.text }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: COLORS.textDim, fontSize: 13, textAlign: "center" }}>
+              Cargá al menos una ganancia para ver el gráfico.
+            </div>
+          )}
+        </div>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          {negocios.map((n) => {
+            const pct = total ? Math.round((Math.max(0, n.valor) / total) * 100) : 0;
+            return (
+              <div key={n.nombre} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 999, background: NEGOCIO_COLORS[n.nombre], flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{n.nombre}</div>
+                  {n.editable ? (
+                    <input
+                      className="pp-input"
+                      type="number"
+                      style={{ marginTop: 4, padding: "4px 8px", fontSize: 13 }}
+                      value={n.raw}
+                      placeholder="$"
+                      onChange={(e) => n.save(e.target.value)}
+                    />
+                  ) : (
+                    <div style={{ fontSize: 12, color: COLORS.textDim }}>${n.valor.toLocaleString("es-AR")}</div>
+                  )}
+                </div>
+                <div style={{ textAlign: "right", minWidth: 44 }}>
+                  <div className="pp-heading" style={{ fontWeight: 800, fontSize: 15 }}>
+                    {pct}%
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TrabajosDashboard() {
   const { items: pedidos, loading } = useCollection("dd-pedido-");
   const reprocanCount = useCollectionCount("reprocan-cliente-");
@@ -2638,6 +2741,7 @@ function TrabajosDashboard() {
 
   return (
     <div>
+      <NegociosPieChart gananciaDropDealer={ddTotals.ganancia} />
       <Section title="DropDealer" accent={COLORS.trabajos}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 10 }}>
           <MetricCard label="Pedidos activos" value={ddTotals.enCurso} accent={COLORS.trabajos} sub={`${pedidos.length} en total`} />
@@ -2689,6 +2793,183 @@ function TrabajosTab() {
   );
 }
 
+/* ======================= RESPALDO (backup / restore) ======================= */
+const BACKUP_PREFIXES = [
+  "datos-credencial-",
+  "datos-direccion-",
+  "datos-documento-",
+  "datos-foto-",
+  "datos-telefono-",
+  "dd-cliente-",
+  "dd-contenido-",
+  "dd-costo-",
+  "dd-pedido-",
+  "dd-proveedor-",
+  "economia-gastofijo-",
+  "economia-gastovariable-",
+  "economia-mov-",
+  "fc-compra-",
+  "fc-fecha-",
+  "fc-idea-",
+  "fc-mockup-",
+  "fc-stock-",
+  "fc-ticket-",
+  "reprocan-cliente-",
+  "salud-comida-",
+  "salud-diaentreno-",
+  "salud-fotoprogreso-",
+  "salud-medidas-",
+  "salud-receta-dulce-",
+  "salud-receta-salado-",
+  "salud-turno-",
+  "tarea-",
+];
+const BACKUP_FIXED_KEYS = [
+  "salud-guia-activacion",
+  "salud-guia-conceptos",
+  "salud-guia-estiramiento",
+  "salud-guia-ficha",
+  "salud-guia-suplementacion",
+  "salud-guia-teambf",
+  "salud-objetivo-nutricional",
+  "salud-actividades",
+  "dd-datospago",
+  "trabajos-ganancia-reprocan",
+  "trabajos-ganancia-fiestacalor",
+];
+
+async function generarRespaldo(onProgress) {
+  const backup = { generadoEl: new Date().toISOString(), fixed: {}, collections: {} };
+  for (const key of BACKUP_FIXED_KEYS) {
+    const raw = await storageGet(key);
+    if (raw !== null && raw !== undefined) backup.fixed[key] = raw;
+  }
+  let done = 0;
+  for (const prefix of BACKUP_PREFIXES) {
+    const keys = await storageListKeys(prefix);
+    const items = {};
+    for (const k of keys) {
+      const raw = await storageGet(k);
+      if (raw !== null && raw !== undefined) items[k] = raw;
+    }
+    backup.collections[prefix] = items;
+    done++;
+    if (onProgress) onProgress(done, BACKUP_PREFIXES.length);
+  }
+  return backup;
+}
+
+function descargarJSON(obj, filename) {
+  const json = JSON.stringify(obj, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+async function restaurarRespaldo(backup) {
+  for (const [key, value] of Object.entries(backup.fixed || {})) {
+    await storageSet(key, value);
+  }
+  for (const prefix of Object.keys(backup.collections || {})) {
+    for (const [key, value] of Object.entries(backup.collections[prefix])) {
+      await storageSet(key, value);
+    }
+  }
+}
+
+function RespaldoTab() {
+  const [estado, setEstado] = useState("idle"); // idle | generando | listo
+  const [progreso, setProgreso] = useState({ done: 0, total: BACKUP_PREFIXES.length });
+  const [restaurando, setRestaurando] = useState(false);
+  const [mensajeRestore, setMensajeRestore] = useState("");
+  const fileInputRef = useRef(null);
+
+  const descargar = async () => {
+    setEstado("generando");
+    const backup = await generarRespaldo((done, total) => setProgreso({ done, total }));
+    const fecha = new Date().toISOString().slice(0, 10);
+    descargarJSON(backup, `respaldo-panel-personal-${fecha}.json`);
+    setEstado("listo");
+    setTimeout(() => setEstado("idle"), 2500);
+  };
+
+  const onFileSelected = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const ok = window.confirm(
+      "Esto va a sobrescribir los datos actuales que coincidan con lo que traiga el archivo de respaldo. ¿Continuar?"
+    );
+    if (!ok) {
+      e.target.value = "";
+      return;
+    }
+    setRestaurando(true);
+    setMensajeRestore("");
+    try {
+      const text = await file.text();
+      const backup = JSON.parse(text);
+      await restaurarRespaldo(backup);
+      setMensajeRestore("✓ Restaurado. Recargando…");
+      setTimeout(() => window.location.reload(), 1200);
+    } catch (err) {
+      setMensajeRestore("No se pudo leer ese archivo. ¿Es un respaldo generado desde acá?");
+      setRestaurando(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="pp-card" style={{ padding: 16, marginBottom: 16, borderLeft: `3px solid ${COLORS.datos}` }}>
+        <div className="pp-heading" style={{ fontWeight: 700, marginBottom: 6 }}>
+          Descargar respaldo
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 12 }}>
+          Genera un archivo con absolutamente todo lo que cargaste en el panel (economía, salud, trabajos, tareas, fotos incluidas) para
+          que lo guardes en tu teléfono o computadora. Podés hacerlo cuando quieras, no borra ni cambia nada acá.
+        </div>
+        <button
+          className="pp-btn"
+          style={{ background: estado === "listo" ? "#7FD9A0" : COLORS.datos, color: "#1B1229" }}
+          onClick={descargar}
+          disabled={estado === "generando"}
+        >
+          {estado === "generando"
+            ? `Generando… (${progreso.done}/${progreso.total})`
+            : estado === "listo"
+            ? "✓ Descargado"
+            : "⬇ Descargar respaldo completo"}
+        </button>
+      </div>
+
+      <div className="pp-card" style={{ padding: 16, borderLeft: `3px solid ${COLORS.datos}` }}>
+        <div className="pp-heading" style={{ fontWeight: 700, marginBottom: 6 }}>
+          Restaurar desde un respaldo
+        </div>
+        <div style={{ fontSize: 13, color: COLORS.textDim, marginBottom: 12 }}>
+          Solo para cuando algo se pierda o se rompa: subís un archivo que hayas descargado con el botón de arriba y te vuelve a cargar
+          todo tal cual estaba en ese momento.
+        </div>
+        <button
+          className="pp-btn"
+          style={{ background: COLORS.surfaceLight, color: COLORS.text }}
+          onClick={() => fileInputRef.current && fileInputRef.current.click()}
+          disabled={restaurando}
+        >
+          {restaurando ? "Restaurando…" : "Elegir archivo de respaldo"}
+        </button>
+        <input ref={fileInputRef} type="file" accept="application/json" style={{ display: "none" }} onChange={onFileSelected} />
+        {mensajeRestore && <div style={{ fontSize: 12, color: COLORS.textDim, marginTop: 10 }}>{mensajeRestore}</div>}
+      </div>
+    </div>
+  );
+}
+
 /* ======================= DATOS MÍOS ======================= */
 function DatosMiosTab() {
   const [sub, setSub] = useState("documentos");
@@ -2701,6 +2982,7 @@ function DatosMiosTab() {
           { key: "direcciones", label: "Direcciones" },
           { key: "telefonos", label: "Teléfonos" },
           { key: "redes", label: "Redes / Contraseñas" },
+          { key: "respaldo", label: "💾 Respaldo" },
         ]}
         active={sub}
         onChange={setSub}
@@ -2776,6 +3058,7 @@ function DatosMiosTab() {
           />
         </div>
       )}
+      {sub === "respaldo" && <RespaldoTab />}
     </div>
   );
 }
@@ -3036,7 +3319,7 @@ const TABS = [
   { key: "tareas", label: "✅ Tareas", accent: COLORS.tareas },
 ];
 
-export default function App() {
+function AppInner({ onSignOut }) {
   const [tab, setTab] = useState("home");
   const [lightboxSrc, setLightboxSrc] = useState(null);
 
@@ -3047,11 +3330,20 @@ export default function App() {
         <BackgroundBlobs />
         <FloatingPetals />
         <div style={{ maxWidth: 900, margin: "0 auto", position: "relative", zIndex: 1 }}>
-          <div style={{ marginBottom: 18 }}>
-            <div className="pp-heading" style={{ fontSize: 22, fontWeight: 800 }}>
-              Panel personal 💫
+          <div style={{ marginBottom: 18, display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <div>
+              <div className="pp-heading" style={{ fontSize: 22, fontWeight: 800 }}>
+                Panel personal 💫
+              </div>
+              <div style={{ fontSize: 13, color: COLORS.textDim }}>Todo lo tuyo, en un solo lugar.</div>
             </div>
-            <div style={{ fontSize: 13, color: COLORS.textDim }}>Todo lo tuyo, en un solo lugar.</div>
+            <button
+              className="pp-btn"
+              style={{ background: "transparent", color: COLORS.textDim, border: `1px solid ${COLORS.border}`, fontSize: 12 }}
+              onClick={onSignOut}
+            >
+              Cerrar sesión
+            </button>
           </div>
 
           <div style={{ display: "flex", gap: 8, marginBottom: 22, flexWrap: "wrap" }}>
@@ -3088,4 +3380,87 @@ export default function App() {
       </div>
     </LightboxContext.Provider>
   );
+}
+
+/* ======================= LOGIN / SESIÓN ======================= */
+function LoginScreen({ onLoggedIn }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setLoading(false);
+    if (error) {
+      setError("Usuario o contraseña incorrectos.");
+      return;
+    }
+    onLoggedIn();
+  };
+
+  return (
+    <div
+      className="pp-root"
+      style={{
+        background: COLORS.ink,
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 20,
+      }}
+    >
+      <FontStyles />
+      <form
+        onSubmit={submit}
+        className="pp-card"
+        style={{ padding: 28, width: "100%", maxWidth: 340, borderColor: COLORS.primary }}
+      >
+        <div className="pp-heading" style={{ fontSize: 20, fontWeight: 800, marginBottom: 4, textAlign: "center" }}>
+          Panel personal 💫
+        </div>
+        <div style={{ fontSize: 12, color: COLORS.textDim, marginBottom: 18, textAlign: "center" }}>Acceso privado</div>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 11, color: COLORS.textDim, marginBottom: 3 }}>Usuario (email)</div>
+          <input className="pp-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus required />
+        </div>
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: COLORS.textDim, marginBottom: 3 }}>Contraseña</div>
+          <input className="pp-input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+        </div>
+        {error && <div style={{ color: "#F0729C", fontSize: 12, marginBottom: 10 }}>{error}</div>}
+        <button className="pp-btn" type="submit" style={{ background: COLORS.primary, color: "#1B1229", width: "100%" }} disabled={loading}>
+          {loading ? "Entrando…" : "Entrar"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+export default function App() {
+  const [session, setSession] = useState(undefined); // undefined = cargando, null = sin sesión, obj = logueada
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setSession(data.session));
+    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    return () => listener.subscription.unsubscribe();
+  }, []);
+
+  if (session === undefined) {
+    return (
+      <div style={{ background: COLORS.ink, minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: COLORS.textDim }}>
+        Cargando…
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <LoginScreen onLoggedIn={() => {}} />;
+  }
+
+  return <AppInner onSignOut={() => supabase.auth.signOut()} />;
 }
